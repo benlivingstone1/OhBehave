@@ -1,8 +1,4 @@
 '''
-This script tracks the location of mice within an arena. Upon starting the script, the user will define the
-number of arenas in the current video. The user will then be prompted to select the area corresponding to each 
-arena. The script will then loop through each arena in each frame, and track the animal. The animals centroid
-is saved as pixel coordinates in the output CSV and is drawn on the frame for the output video. 
 
 - Ben Livingstone, June '23
 '''
@@ -16,6 +12,7 @@ from imageProcessing import imgProc
 from centroid import centroid
 from selectROIs import selectROIs
     
+
 
 if __name__ == "__main__":
     # Define the layout for the paramter window
@@ -74,6 +71,8 @@ if __name__ == "__main__":
     selectedRect = 0
     roiSelected = False
     numROIs = int(values['-numArenas-'])
+    position_roi = []
+    completed_position_roi = False
 
     csvFile = open(f"centroid_{base_name}.csv", "w", newline='')
     csvWriter = csv.writer(csvFile)
@@ -95,24 +94,61 @@ if __name__ == "__main__":
             ROIs = selectROIs(frame, numROIs)
             roiSelected = True
 
-        # For each ROI... 
-        for i in range(len(ROIs)):
-            # Get ROI dimensions
-            x, y, w, h = ROIs[i]
-            # Draw the ROI
-            cv.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-            cv.putText(frame, str(i + 1), (x, y-10), cv.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
 
-            # Track the largest object in ROI
-            point = centroid(processed[y:y+h, x:x+w])
-            # Convert back to whole frame coordinates
-            point = np.array(point)
-            dim = np.array([x, y])
-            frame_point = tuple(point + dim)
-            # Add the point to the csv
-            csvWriter.writerow([i + 1, int(frame_point[0]), int(frame_point[1])])
-            # Draw the centroid of the tracked object on the frame
-            cv.circle(frame, (int(frame_point[0]), int(frame_point[1])), 5, (0, 255, 0), -1)
+        # # Get ROI dimensions
+        # x, y, w, h = ROIs[i]
+        # # Draw the ROI
+        # cv.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+        # cv.putText(frame, str(i + 1), (x, y-10), cv.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+
+        # Track the largest object in ROI
+        point = centroid(processed)
+
+        if not completed_position_roi:
+            # Determine spatial relationship between 2 ROIs
+            if len(ROIs) == 2:
+                # Determine which ROI is on the left
+                difference = ROIs[0][0] - ROIs[1][0]
+                # Append location corresponding to same index as roi
+                if difference < 0:
+                    position_roi.append('LEFT')
+                    position_roi.append('RIGHT')
+                else:
+                    position_roi.append('RIGHT')
+                    position_roi.append('LEFT')
+            # If there is more than 2 ROI's sort them from left to right (ascending values of x)
+            else:
+                for i in range(len(ROIs)):
+                    position_roi.append(i + 1)
+                position_roi.sort()
+
+        # dimensions of the point
+        px, py = point
+
+        # Draw the ROIs
+        # Get list of x value for all ROIs
+        i = 0
+        x_pos = []
+        current_position = None
+        for roi in ROIs:
+            x, y, w, h = roi
+
+            if (x <= px <= x+w and y <= py <= y+h):
+                cv.rectangle(frame, (x,y), (x+w, y+h), (0, 0, 255), 2)
+                cv.putText(frame, position_roi[i], (x, y-10), cv.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
+                current_position = position_roi[i]
+            else:
+                cv.rectangle(frame, (x,y), (x+w, y+h), (0, 255, 0), 2)
+                cv.putText(frame, position_roi[i], (x, y-10), cv.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+            i += 1
+
+        if current_position == None:
+            current_position = "CENTER"
+      
+        # Add the point to the csv
+        csvWriter.writerow([current_position, int(point[0]), int(point[1])])
+        # Draw the centroid of the tracked object on the frame
+        cv.circle(frame, (int(point[0]), int(point[1])), 5, (0, 255, 0), -1)
 
         cv.imshow("frame", frame)
 
