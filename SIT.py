@@ -1,4 +1,11 @@
 '''
+This script tracks a mouses location within the 3 chambers of the Social Interaction Test (SIT).
+Tracking is done by using background subtraction to discard static pixels, then each frame is 
+thresholded and processed to isolate the moving mouse. Then the centroid of the mouse is determined
+and recorded on an output CSV. 
+
+To improve tracking accuracy, only moving objects in the selected ROI are tracked. This prevents 
+tracking of unwanted objects such as an experimenter moving through the frame. 
 
 - Ben Livingstone, June '23
 '''
@@ -11,6 +18,7 @@ import os
 from imageProcessing import imgProc
 from centroid import centroid
 from selectROIs import selectROIs
+from pointInside import pointInside
     
 
 
@@ -18,7 +26,7 @@ if __name__ == "__main__":
     # Define the layout for the paramter window
     layout_params = [
         [sg.Text('Select Video File: '), sg.FileBrowse('Browse', key='-path-')],
-        [sg.Text('Number of Arenas: '), sg.InputText(default_text='2', key='-numArenas-')],
+        [sg.Text('Number of Arenas: '), sg.InputText(default_text='1', key='-numArenas-')],
         [sg.Button('Start')]
     ]
 
@@ -71,11 +79,25 @@ if __name__ == "__main__":
     selectedRect = 0
     roiSelected = False
     numROIs = int(values['-numArenas-'])
-    position_roi = []
-    completed_position_roi = False
+    last_location = None
 
     csvFile = open(f"centroid_{base_name}.csv", "w", newline='')
     csvWriter = csv.writer(csvFile)
+
+    # Use frame to get ROI
+    ret, frame = video.read()
+
+    # Define ROI
+    if not roiSelected:
+        ROIs = selectROIs(frame, numROIs)
+        roiSelected = True
+
+    # Split arena ROI into 3 equal ROIs
+    x, y, w, h = ROIs[0]
+    third = w // 3
+    left = (x, y, third, h)
+    center = (x + third, y, third, h)
+    right = (x + 2 * third, y, third, h)
 
     # Loop through each frame of the video
     while True:
@@ -89,64 +111,35 @@ if __name__ == "__main__":
         # Process image to denoise / smooth
         processed = imgProc(fgndMask)
 
-        # Define ROI
-        if not roiSelected:
-            ROIs = selectROIs(frame, numROIs)
-            roiSelected = True
-
-
-        # # Get ROI dimensions
-        # x, y, w, h = ROIs[i]
-        # # Draw the ROI
-        # cv.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-        # cv.putText(frame, str(i + 1), (x, y-10), cv.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+        # Draw each rectangle in different colours
+        cv.rectangle(frame, (left[0], left[1]), (left[0] + left[2], left[1] + left[3]), (0, 0, 255), 2)
+        cv.putText(frame, 'Left', (left[0], y-10), cv.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
+        cv.rectangle(frame, (center[0], center[1]), (center[0] + center[2], center[1] + center[3]), (0, 255, 0), 2)
+        cv.putText(frame, 'Center', (center[0], y-10), cv.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+        cv.rectangle(frame, (right[0], right[1]), (right[0] + right[2], right[1] + right[3]), (255, 0, 0), 2)
+        cv.putText(frame, 'Right', (right[0], y-10), cv.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
 
         # Track the largest object in ROI
-        point = centroid(processed)
+        point = centroid(processed[y:y+h, x:x+w])
+        # Convert back to whole frame coordinates
+        point = np.array(point)
+        dim = np.array([x, y])
+        point = tuple(point + dim)
+        location = None
 
-        if not completed_position_roi:
-            # Determine spatial relationship between 2 ROIs
-            if len(ROIs) == 2:
-                # Determine which ROI is on the left
-                difference = ROIs[0][0] - ROIs[1][0]
-                # Append location corresponding to same index as roi
-                if difference < 0:
-                    position_roi.append('LEFT')
-                    position_roi.append('RIGHT')
-                else:
-                    position_roi.append('RIGHT')
-                    position_roi.append('LEFT')
-            # If there is more than 2 ROI's sort them from left to right (ascending values of x)
-            else:
-                for i in range(len(ROIs)):
-                    position_roi.append(i + 1)
-                position_roi.sort()
+        if pointInside(point, left):
+            location = 'Left'
+        elif pointInside(point, center):
+            location = 'Center'
+        elif pointInside(point, right):
+            location = 'Right'
+        else:
+            location = last_location
 
-        # dimensions of the point
-        px, py = point
-
-        # Draw the ROIs
-        # Get list of x value for all ROIs
-        i = 0
-        x_pos = []
-        current_position = None
-        for roi in ROIs:
-            x, y, w, h = roi
-
-            if (x <= px <= x+w and y <= py <= y+h):
-                cv.rectangle(frame, (x,y), (x+w, y+h), (0, 0, 255), 2)
-                cv.putText(frame, position_roi[i], (x, y-10), cv.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
-                current_position = position_roi[i]
-            else:
-                cv.rectangle(frame, (x,y), (x+w, y+h), (0, 255, 0), 2)
-                cv.putText(frame, position_roi[i], (x, y-10), cv.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
-            i += 1
-
-        if current_position == None:
-            current_position = "CENTER"
+        last_location = location
       
         # Add the point to the csv
-        csvWriter.writerow([current_position, int(point[0]), int(point[1])])
+        csvWriter.writerow([location, int(point[0]), int(point[1])])
         # Draw the centroid of the tracked object on the frame
         cv.circle(frame, (int(point[0]), int(point[1])), 5, (0, 255, 0), -1)
 

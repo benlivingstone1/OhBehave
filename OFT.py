@@ -15,6 +15,7 @@ import os
 from imageProcessing import imgProc
 from centroid import centroid
 from selectROIs import selectROIs
+from pointInside import pointInside
     
 
 if __name__ == "__main__":
@@ -74,6 +75,8 @@ if __name__ == "__main__":
     selectedRect = 0
     roiSelected = False
     numROIs = int(values['-numArenas-'])
+    position_roi = []
+    completed_position_roi = False
 
     csvFile = open(f"centroid_{base_name}.csv", "w", newline='')
     csvWriter = csv.writer(csvFile)
@@ -95,13 +98,41 @@ if __name__ == "__main__":
             ROIs = selectROIs(frame, numROIs)
             roiSelected = True
 
+        if not completed_position_roi:
+            # Determine spatial relationship between 2 ROIs
+            if len(ROIs) == 2:
+                # Determine which ROI is on the left
+                difference = ROIs[0][0] - ROIs[1][0]
+                # Append location corresponding to same index as roi
+                if difference < 0:
+                    position_roi.append('LEFT')
+                    position_roi.append('RIGHT')
+                else:
+                    position_roi.append('RIGHT')
+                    position_roi.append('LEFT')
+            # If there is more than 2 ROI's sort them from left to right (ascending values of x)
+            else:
+                for i in range(len(ROIs)):
+                    position_roi.append(i + 1)
+                position_roi.sort()
+
         # For each ROI... 
         for i in range(len(ROIs)):
             # Get ROI dimensions
             x, y, w, h = ROIs[i]
             # Draw the ROI
             cv.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-            cv.putText(frame, str(i + 1), (x, y-10), cv.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+            cv.putText(frame, position_roi[i], (x, y-10), cv.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+
+            # Draw middle zone in the ROI
+            # dimensions of the center rectangle
+            w_c = int(w * 2/3)
+            h_c = int(h * 2/3)
+            # cooridinates to start drawing the rectangle
+            x_c = x + (w - w_c) // 2
+            y_c = y + (h - h_c) // 2
+            center_rect = (x_c, y_c, w_c, h_c)
+            cv.rectangle(frame, (x_c, y_c), (x_c + w_c, y_c + h_c), (0, 0, 255), 2)
 
             # Track the largest object in ROI
             point = centroid(processed[y:y+h, x:x+w])
@@ -109,10 +140,19 @@ if __name__ == "__main__":
             point = np.array(point)
             dim = np.array([x, y])
             frame_point = tuple(point + dim)
+
+            # Check if point is in the center
+            if pointInside(frame_point, center_rect):
+                cv.circle(frame, (int(frame_point[0]), int(frame_point[1])), 5, (0, 0, 255), -1)
+                location = "center"
+            else:
+                cv.circle(frame, (int(frame_point[0]), int(frame_point[1])), 5, (0, 255, 0), -1)
+                location = "edge"
+
             # Add the point to the csv
-            csvWriter.writerow([i + 1, int(frame_point[0]), int(frame_point[1])])
+            csvWriter.writerow([position_roi[i], location, int(frame_point[0]), int(frame_point[1])])
             # Draw the centroid of the tracked object on the frame
-            cv.circle(frame, (int(frame_point[0]), int(frame_point[1])), 5, (0, 255, 0), -1)
+            
 
         cv.imshow("frame", frame)
 
